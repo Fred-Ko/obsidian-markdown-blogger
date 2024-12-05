@@ -1,258 +1,293 @@
-import { App, Editor, FuzzySuggestModal, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
+import {
+  App,
+  Editor,
+  MarkdownView,
+  Modal,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  TFile,
+} from "obsidian";
 import * as fs from "fs";
 import * as path from "path";
-import * as os from "os";
 
+/** 설정 인터페이스 */
 interface MarkdownBloggerSettings {
-	projectFolder: string;
-	showHiddenFolders: boolean;
+  projectFolders: string[];
+  showHiddenFolders: boolean;
+  convertToJekyllFormat: boolean;
 }
 
+/** 기본 설정값 */
 const DEFAULT_SETTINGS: MarkdownBloggerSettings = {
-	projectFolder: "",
-	showHiddenFolders: false
+  projectFolders: [""],
+  showHiddenFolders: false,
+  convertToJekyllFormat: false,
+};
 
-}
-enum Action {
-	Push,
-	Pull
-}
-export default class MarkdownBlogger extends Plugin {
-	settings: MarkdownBloggerSettings;
+/** 파일 시스템 관련 유틸리티 클래스 */
+class FileService {
+  static exists(filePath: string): boolean {
+    return fs.existsSync(filePath);
+  }
 
-	async onload() {
-		await this.loadSettings();
+  static readFile(filePath: string): string {
+    return fs.readFileSync(filePath, "utf8");
+  }
 
-		this.addCommand({
-			id: "validate-path",
-			name: "Validate path",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				
-				const { projectFolder } = this.settings;
-				if (!fs.existsSync(projectFolder)) {
-					new ErrorModal(this.app).open();
-					return;
-				}
-				new Notice(`Valid path: ${this.settings.projectFolder}`);
-			},
-		});
+  static writeFile(filePath: string, data: string): void {
+    fs.writeFileSync(filePath, data, { encoding: "utf8" });
+  }
 
-		this.addCommand({
-			id: "push-md",
-			name: "Push markdown",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				
-				const { projectFolder } = this.settings;
-				if (!fs.existsSync(projectFolder)) {
-					new ErrorModal(this.app).open();
-					return;
-				}
-				const text = editor.getDoc().getValue();
-				const projectBlogPath = path.resolve(this.settings.projectFolder, view.file.name);
-				try {
-					fs.writeFileSync(`${projectBlogPath}`, text, {encoding: "utf8"});
-					new Notice(`Your file has been pushed! At ${projectBlogPath}`);
-				} catch (err) {
-					new Notice(err.message);
-				}
-			},
-		});
+  static listDirectory(currentPath: string): string[] {
+    return fs.readdirSync(currentPath);
+  }
 
-		this.addCommand({
-			id: "pull-md",
-			name: "Pull markdown",
-			editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView) => {
-				const projectBlogPath = path.resolve(this.settings.projectFolder, view.file.name);
-			
-				if (fs.existsSync(projectBlogPath)) {
-					if (!checking) {
-						try {
-							const file = fs.readFileSync(projectBlogPath, "utf8");
-							editor.getDoc().setValue(file);
-							new Notice(`Your file has been pulled! From ${projectBlogPath}`);
-						} catch (err) {
-							new Notice(err.message);
-						}
-					}
-					return true;
-				}
-				return false;
-			},
-		});
-
-		this.addCommand({
-			id: "push-custom-path-md",
-			name: "Push to custom path",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				new PathModal(this.app, this.settings, Action.Push).open();
-			}
-		});
-
-		this.addCommand({
-			id: "pull-custom-path",
-			name: "Pull from custom path",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				new PathModal(this.app, this.settings, Action.Pull).open()
-			}
-		})
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new MarkdownBloggerSettingTab(this.app, this));
-	}
-
-	onunload() {
-
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+  static getStats(fullPath: string): fs.Stats | undefined {
+    try {
+      return fs.statSync(fullPath, { throwIfNoEntry: false });
+    } catch {
+      return undefined;
+    }
+  }
 }
 
+/** 공통 에러 모달 */
 class ErrorModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+  message: string;
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText("The project folder does not exist. Please create the path or update the current path in plugin settings.");
-	}
+  constructor(app: App, message: string) {
+    super(app);
+    this.message = message;
+  }
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.setText(this.message);
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
 }
 
-class PathModal extends FuzzySuggestModal<string> {
-	currPath = os.homedir();
-	settings: MarkdownBloggerSettings
-	action: Action
 
-	constructor(app: App, settings: MarkdownBloggerSettings, action: Action) {
-		super(app);
-		this.settings = settings;
-		this.action = action;
-	}
-	
-	getItems(): string[] {
-		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-
-		const paths = fs.readdirSync(this.currPath).filter((p) => {
-			const fullPath = path.resolve(this.currPath, p);
-			let stats;
-			try { stats = fs.statSync(fullPath, { throwIfNoEntry: false }); } catch (e) { return false; }
-			if (stats === undefined) return false;
-			return (
-				(stats.isDirectory()
-				|| (path.basename(fullPath) === view?.file.name))
-				&& (p[0] !== "." || this.settings.showHiddenFolders)
-			);
-		});
-		
-		paths.push("..");
-		paths.push("Select");
-
-		return paths;
-	}
-	getItemText(dir: string): string {
-		return dir;
-	}
-	onChooseItem(dir: string, evt: MouseEvent | KeyboardEvent) {
-		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-		if (dir === "Select") {
-			if (view) {
-				if (!fs.existsSync(path.resolve(this.currPath))) {
-					new ErrorModal(this.app).open();
-					return;
-				}
-
-				const text = view.editor.getDoc().getValue();
-				const filePath = path.resolve(this.currPath, view.file.name);
-				if (this.action === Action.Push) {
-					try {
-						fs.writeFileSync(`${filePath}`, text, {encoding: "utf8"});
-						new Notice(`Your file has been pushed! At ${filePath}`);
-					} catch (err) {
-						new Notice(err.message);
-					}
-				} else if (this.action === Action.Pull) {
-					try {
-						const file = fs.readFileSync(filePath, "utf8");
-						view.editor.getDoc().setValue(file);
-						new Notice(`Your file has been pulled! From ${filePath}`);
-					} catch (err) {
-						new Notice(err.message);
-					}
-				}
-			}
-			return;
-		} else if (view && dir === view.file.name) {
-			const filePath = path.resolve(this.currPath, view.file.name);
-			if (this.action === Action.Push) {
-				const text = view.editor.getDoc().getValue();
-				try {
-					fs.writeFileSync(`${filePath}`, text, {encoding: "utf8"});
-					new Notice(`Your file has been pushed! At ${filePath}`);
-				} catch (err) {
-					new Notice(err.message);
-				}
-			} else if (this.action === Action.Pull) {
-				try {
-					const file = fs.readFileSync(filePath, "utf8");
-					view.editor.getDoc().setValue(file);
-					new Notice(`Your file has been pulled! From ${filePath}`);
-				} catch (err) {
-					new Notice(err.message);
-				}
-			}
-			return;
-		} else {
-			this.currPath = path.normalize(path.join(this.currPath, dir));
-		}
-		this.open();
-	}
-}
-
+/** 설정 탭 클래스 */
 class MarkdownBloggerSettingTab extends PluginSettingTab {
-	plugin: MarkdownBlogger;
+  plugin: MarkdownBlogger;
 
-	constructor(app: App, plugin: MarkdownBlogger) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
+  constructor(app: App, plugin: MarkdownBlogger) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
 
-	display(): void {
-		const {containerEl} = this;
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
 
-		containerEl.empty();
+    containerEl.createEl("h2", { text: "Markdown Blogger 설정" });
 
-		containerEl.createEl("h2", {text: "Settings for Obsidian Markdown Blogger."});
+    // 프로젝트 폴더 경로 설정
+    new Setting(containerEl)
+      .setName("로컬 프로젝트 폴더 경로")
+      .setDesc("블로그, 포트폴리오 또는 정적 사이트를 위한 로컬 프로젝트 폴더의 절대 경로를 선택하세요.")
+      .addDropdown((dropdown) => {
+        this.plugin.settings.projectFolders.forEach((folder) => {
+          dropdown.addOption(folder, folder);
+        });
+        dropdown.setValue(this.plugin.settings.projectFolders[0])
+          .onChange(async (value) => {
+            this.plugin.settings.projectFolders[0] = value;
+            await this.plugin.saveSettings();
+          });
+      });
 
-		new Setting(containerEl)
-			.setName("Local project folder path")
-			.setDesc("The local project folder for your blog, portfolio, or static site. Must be an absolute path.")
-			.addText(text => text
-				.setPlaceholder("/Users/johnsample/projects/astro-blog/collections/")
-				.setValue(this.plugin.settings.projectFolder)
-				.onChange(async (value) => {
-					this.plugin.settings.projectFolder = value;
-					await this.plugin.saveSettings();
-				})
-			);
-		new Setting(containerEl).setName("Show hidden folders")
-			.setDesc("Show hidden folders when pushing to a custom path")
-			.addToggle(cb => cb
-				.setValue(this.plugin.settings.showHiddenFolders)
-				.onChange(async (value) => {
-					this.plugin.settings.showHiddenFolders = value;
-					await this.plugin.saveSettings();
-				})
-			);				
-	}
+    // 경로 추가 버튼
+    let newPath = "";
+    new Setting(containerEl)
+      .setName("경로 추가")
+      .setDesc("새로운 프로젝트 폴더 경로를 추가합니다.")
+      .addText((text) =>
+        text.setPlaceholder("새 경로 입력")
+          .onChange((value) => {
+            newPath = value.trim().replace(/\s+/g, ' ');
+          })
+      )
+      .addButton((button) =>
+        button.setButtonText("추가")
+          .onClick(async () => {
+            if (newPath && !this.plugin.settings.projectFolders.includes(newPath)) {
+              this.plugin.settings.projectFolders.push(newPath);
+              await this.plugin.saveSettings();
+              this.display(); // UI 업데이트
+            }
+          })
+      );
+
+    // 경로 삭제 버튼
+    new Setting(containerEl)
+      .setName("경로 삭제")
+      .setDesc("선택된 프로젝트 폴더 경로를 삭제합니다.")
+      .addDropdown((dropdown) => {
+        this.plugin.settings.projectFolders.forEach((folder) => {
+          dropdown.addOption(folder, folder);
+        });
+        dropdown.setValue(this.plugin.settings.projectFolders[0])
+          .onChange((value) => {
+            this.plugin.settings.projectFolders[0] = value;
+          });
+      })
+      .addButton((button) =>
+        button.setButtonText("삭제")
+          .onClick(async () => {
+            const index = this.plugin.settings.projectFolders.indexOf(this.plugin.settings.projectFolders[0]);
+            if (index > -1) {
+              this.plugin.settings.projectFolders.splice(index, 1);
+              await this.plugin.saveSettings();
+              this.display(); // UI 업데이트
+            }
+          })
+      );
+
+    // 숨김 폴더 표시 설정
+    new Setting(containerEl)
+      .setName("숨김 폴더 표시")
+      .setDesc("커스텀 경로로 푸시할 때 숨김 폴더를 표시할지 여부를 설정합니다.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showHiddenFolders)
+          .onChange(async (value) => {
+            this.plugin.settings.showHiddenFolders = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // 파일 이름 Jekyll 형식 변환
+    new Setting(containerEl)
+      .setName("파일 이름 Jekyll 형식 변환")
+      .setDesc("파일 이름을 Jekyll 형식으로 변환할지 여부를 설정합니다.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.convertToJekyllFormat)
+          .onChange(async (value) => {
+            this.plugin.settings.convertToJekyllFormat = value;
+            await this.plugin.saveSettings();
+          })
+      );
+  }
+}
+
+/** 메인 플러그인 클래스 */
+export default class MarkdownBlogger extends Plugin {
+  settings: MarkdownBloggerSettings;
+
+  async onload() {
+    await this.loadSettings();
+
+    // 커맨드 등록
+    this.registerCommands();
+
+    // 설정 탭 추가
+    this.addSettingTab(new MarkdownBloggerSettingTab(this.app, this));
+  }
+
+  onunload() {
+    // 필요 시 정리 작업
+  }
+
+  /** 설정 로드 */
+  async loadSettings() {
+    this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
+  }
+
+  /** 설정 저장 */
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
+
+  /** 커맨드 등록 메서드 */
+	private registerCommands() {
+
+    this.addCommand({
+      id: "validate-path",
+      name: "경로 유효성 검사",
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        if (!this.isProjectPathValid()) return;
+        new Notice(`유효한 경로: ${this.settings.projectFolders[0]}`);
+      },
+    });
+
+    this.addCommand({
+      id: "push-md",
+      name: "Markdown 푸시",
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        if (!this.isProjectPathValid()) return;
+        const file = view.file;
+        if (file) {
+          const targetPath = path.resolve(this.settings.projectFolders[0], file.name);
+          this.pushFile(file, targetPath);
+        }
+      },
+    });
+
+		this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (file instanceof TFile) {
+          menu.addItem((item) => {
+            item.setTitle("Markdown 푸시")
+              .setIcon("upload")
+              .onClick(() => {
+                if (!this.isProjectPathValid()) return;
+                const targetPath = path.resolve(this.settings.projectFolders[0], file.name);
+                this.pushFile(file, targetPath);
+              });
+          });
+        }
+      })
+    );
+  }
+
+  /** 프로젝트 경로 유효성 검사 */
+  private isProjectPathValid(): boolean {
+    const { projectFolders } = this.settings;
+    if (!FileService.exists(projectFolders[0])) {
+      new ErrorModal(this.app, "프로젝트 폴더가 존재하지 않습니다. 경로를 확인하거나 설정을 업데이트하세요.").open();
+      return false;
+    }
+    return true;
+  }
+
+  /** 파일 푸시 메서드 */
+	private async pushFile(file: TFile, targetPath: string) {
+		console.log(targetPath);
+    try {
+      const fileContent = await this.app.vault.read(file);
+
+      // 파일 이름 변환 로직 추가
+      if (this.settings.convertToJekyllFormat) {
+        const jekyllFileName = this.convertToJekyllFileName(file.name);
+        targetPath = path.resolve(this.settings.projectFolders[0], jekyllFileName);
+      }
+
+      FileService.writeFile(targetPath, fileContent);
+      new Notice(`파일이 성공적으로 푸시되었습니다: ${targetPath}`);
+    } catch (error: any) {
+      new Notice(`푸시 중 오류 발생: ${error.message}`);
+    }
+  }
+
+  /** Jekyll 형식으로 파일 이름 변환 메서드 */
+  private convertToJekyllFileName(fileName: string): string {
+    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 형식
+    const nameWithoutExtension = path.parse(fileName).name;
+
+    // 파일 이름에서 허용되지 않는 문자를 제거하고, 공백을 하이픈으로 대체
+    const sanitizedTitle = nameWithoutExtension
+      .replace(/[#?]/g, '') // 허용되지 않는 문자 제거
+      .replace(/\s+/g, '-'); // 공백을 하이픈으로 대체
+
+    return `${date}-${sanitizedTitle}.md`;
+  }
 }
