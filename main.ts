@@ -13,14 +13,14 @@ import * as fs from "fs";
 import * as path from "path";
 
 /** 설정 인터페이스 */
-interface MarkdownBloggerSettings {
+interface Settings {
   projectFolders: string[];
   showHiddenFolders: boolean;
   convertToJekyllFormat: boolean;
 }
 
 /** 기본 설정값 */
-const DEFAULT_SETTINGS: MarkdownBloggerSettings = {
+const DEFAULT_SETTINGS: Settings = {
   projectFolders: [""],
   showHiddenFolders: false,
   convertToJekyllFormat: false,
@@ -37,6 +37,10 @@ class FileService {
   }
 
   static writeFile(filePath: string, data: string): void {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
     fs.writeFileSync(filePath, data, { encoding: "utf8" });
   }
 
@@ -75,10 +79,10 @@ class ErrorModal extends Modal {
 
 
 /** 설정 탭 클래스 */
-class MarkdownBloggerSettingTab extends PluginSettingTab {
-  plugin: MarkdownBlogger;
+class MarkdownFilePusherSettingTab extends PluginSettingTab {
+  plugin: MarkdownFilePusher;
 
-  constructor(app: App, plugin: MarkdownBlogger) {
+  constructor(app: App, plugin: MarkdownFilePusher) {
     super(app, plugin);
     this.plugin = plugin;
   }
@@ -151,19 +155,6 @@ class MarkdownBloggerSettingTab extends PluginSettingTab {
           })
       );
 
-    // 숨김 폴더 표시 설정
-    new Setting(containerEl)
-      .setName("숨김 폴더 표시")
-      .setDesc("커스텀 경로로 푸시할 때 숨김 폴더를 표시할지 여부를 설정합니다.")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showHiddenFolders)
-          .onChange(async (value) => {
-            this.plugin.settings.showHiddenFolders = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
     // 파일 이름 Jekyll 형식 변환
     new Setting(containerEl)
       .setName("파일 이름 Jekyll 형식 변환")
@@ -180,8 +171,8 @@ class MarkdownBloggerSettingTab extends PluginSettingTab {
 }
 
 /** 메인 플러그인 클래스 */
-export default class MarkdownBlogger extends Plugin {
-  settings: MarkdownBloggerSettings;
+export default class MarkdownFilePusher extends Plugin {
+  settings: Settings;
 
   async onload() {
     await this.loadSettings();
@@ -190,7 +181,7 @@ export default class MarkdownBlogger extends Plugin {
     this.registerCommands();
 
     // 설정 탭 추가
-    this.addSettingTab(new MarkdownBloggerSettingTab(this.app, this));
+    this.addSettingTab(new MarkdownFilePusherSettingTab(this.app, this));
   }
 
   onunload() {
@@ -226,7 +217,8 @@ export default class MarkdownBlogger extends Plugin {
         if (!this.isProjectPathValid()) return;
         const file = view.file;
         if (file) {
-          const targetPath = path.resolve(this.settings.projectFolders[0], file.name);
+          const relativePath = path.relative(this.app.vault.getRoot().path, path.dirname(file.path));
+          const targetPath = path.resolve(this.settings.projectFolders[0], relativePath);
           this.pushFile(file, targetPath);
         }
       },
@@ -240,7 +232,10 @@ export default class MarkdownBlogger extends Plugin {
               .setIcon("upload")
               .onClick(() => {
                 if (!this.isProjectPathValid()) return;
-                const targetPath = path.resolve(this.settings.projectFolders[0], file.name);
+                const relativePath = path.relative(this.app.vault.getRoot().path, path.dirname(file.path));
+                const targetPath = path.resolve(this.settings.projectFolders[0], relativePath);
+                console.log(`relativePath : ${relativePath}`);
+                console.log(`targetPath : ${targetPath}`);
                 this.pushFile(file, targetPath);
               });
           });
@@ -261,14 +256,13 @@ export default class MarkdownBlogger extends Plugin {
 
   /** 파일 푸시 메서드 */
 	private async pushFile(file: TFile, targetPath: string) {
-		console.log(targetPath);
     try {
       const fileContent = await this.app.vault.read(file);
 
       // 파일 이름 변환 로직 추가
       if (this.settings.convertToJekyllFormat) {
         const jekyllFileName = this.convertToJekyllFileName(file.name);
-        targetPath = path.resolve(this.settings.projectFolders[0], jekyllFileName);
+        targetPath = path.resolve(targetPath, "_posts", jekyllFileName);
       }
 
       FileService.writeFile(targetPath, fileContent);

@@ -1,16 +1,16 @@
 {
-	"name": "obsidian-markdown-blogger",
-	"version": "1.0.0",
-	"description": "This plug-in allows developers to upload markdown notes to their web-based blog in one-click. It is meant to be used with Astro.js, Next.js, or any other framework configured to render markdown pages.",
+	"name": "obsidian-markdown-file-pusher",
+	"version": "0.0.1",
+	"description": "",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
-		"cp": "cp styles.css main.js manifest.json /Users/junhoko/Insync/fredko328@gmail.com/\"Google Drive\"/gdrive-fredko/Junoko/Junoko/.obsidian/plugins/obsidian-markdown-blogger/"
+		"cp": "cp styles.css main.js manifest.json /Users/junhoko/Insync/fredko328@gmail.com/\"Google Drive\"/gdrive-fredko/Junoko/Junoko/.obsidian/plugins/obsidian-markdown-file-pusher/"
 	},
 	"keywords": [],
-	"author": "Alexa Fazio",
+	"author": "FredKo",
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^16.11.6",
